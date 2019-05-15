@@ -1,0 +1,23 @@
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: http-echo
+  annotations:
+    certmanager.k8s.io/cluster-issuer: letsencrypt-prod
+    certmanager.k8s.io/acme-http01-edit-in-place: "true"
+    kubernetes.io/ingress.global-static-ip-name: http-echo-ip
+  labels:
+    app: http-echo
+spec:
+  rules:
+  - host: opa4fun.com
+    http:
+      paths:
+        - path: /
+          backend:
+            serviceName: http-echo-backend
+            servicePort: 8080
+  tls:
+    - hosts:
+      - opa4fun.com
+      secretName: opa4fun-cert
