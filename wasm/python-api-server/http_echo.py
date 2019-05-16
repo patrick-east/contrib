@@ -4,67 +4,32 @@ from flask import Flask, jsonify, request, Response
 from functools import wraps
 from optparse import OptionParser
 from werkzeug.routing import Rule
-from wasmer import Instance, validate, Value
 import json
 import pprint
 import time
+import opa
 
 
 app = Flask(__name__)
+
+# Global "opa.Rego" object
 policy = None
-
-
-def eval(input):
-    """Invoke the compiled policies eval function with a given input"""
-    input_length = len(input)
-
-    # using the loaded wasm policy, check if
-    # this request is allowed or not
-    global policy
-    
-    # Allocate memory for the input string
-    addr = policy.export.opa_malloc(input_length)
-
-    # Get a "view" of the address as a uint8 array
-    memory = policy.memory.uint8_view(addr)
-
-    # Copy the input string into the memory
-    for i in range(input_length):
-        memory[i] = input[i]
-
-    return policy.exports.eval(addr, input_length)
-
-
-def check_policy(func):
-    """Decorator to enforce policy on API calls"""
-    @wraps(func)
-    def decorated_function(*args, **kwargs):
-
-        # Evaluate the policy and respond accordingly
-        allowed = eval(json.dumps(request))
-        
-        if not allowed:
-            response = jsonify({"error": "Not allowed by policy"})
-            response.status_code = "403"
-            response.status = "Forbidden"
-            return response
-        else:
-            return func(*args, **kwargs)
-
-    return decorated_function
-
-
-def _extract(d):
-    """Helper to build response dicts"""
-    return {key: value for (key, value) in d.items()}
-
 
 # Route all calls to "echo"
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
-@check_policy
 def echo(path):
     """Responds with details about the request recieved."""
+
+    # Evaluate the policy and respond accordingly
+    input_json = json.dumps(request)
+    allowed = policy.eval_bool(input_json)
+    if not allowed:
+        response = jsonify({"error": "Not allowed by policy"})
+        response.status_code = "403"
+        response.status = "Forbidden"
+        return response
+
     data = {
         'time' : time.time(),
         'path' : request.path,
@@ -87,17 +52,9 @@ def echo(path):
     return response
 
 def load_policy(policy_file):
-    # Read the file (could be fetched remotely or something too)
-    wasm_bytes = open(policy_file, 'rb').read()
-
-    # Use the wasmer validate API to ensure the file was legit
-    if not validate(wasm_bytes):
-        print('The program seems corrupted.')
-        exit(1)
-
-    # Create a new instance (load the wasm program and initialize the runtime)
-    instance = Instance(wasm_bytes)
-    return instance
+    """Load the policy wasm from file and prepare for eval"""
+    policy = opa.Rego(wasm_file=policy_file)
+    return policy
 
 def main():
     parser = OptionParser()
